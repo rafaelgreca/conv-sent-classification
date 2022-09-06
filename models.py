@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from typing import Union
 
+# TODO: Refazer
 class CNN(nn.Module):
     """
     Yoon Kim"s Convolutional Neural Network (CNN) models implementation described

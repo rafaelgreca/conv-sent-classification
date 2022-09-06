@@ -7,14 +7,16 @@ import numpy as np
 import warnings
 import pandas as pd
 import time
-from preprocessing import Preprocesser
-from utils import create_vocab, prepare_data, load_pretrained_embedding, create_data_loader, train_model, read_files
+import torch.nn.functional as F
+from utils import create_vocab, prepare_data, load_pretrained_embedding, read_files
 from sklearn.model_selection import train_test_split
 from models import CNN
+from torch.utils.data import DataLoader
+from dataset import DatasetDL
 
 warnings.filterwarnings("ignore")
 seed = 2109
-device = torch.device("cpu" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_num_threads(1)
 
 # making sure the experiment is reproducible
@@ -34,6 +36,53 @@ def _init_fn(worker_id):
 generator = torch.Generator()
 generator.manual_seed(seed)
 
+# trains the model
+def train(model: torch.nn.Module,
+          train_dataloader: DataLoader,
+          device: torch.device,
+          optimizer: torch.optim):
+    train_loss = 0
+    train_acc = 0
+    model.train()
+    
+    for batch_idx, batch in enumerate(train_dataloader):
+        data, target = batch["X"].to(device), batch["y"].type(torch.FloatTensor).to(device)
+        optimizer.zero_grad()
+
+        output = model(data)
+        loss = F.binary_cross_entropy(output, target)
+        loss.backward()
+        optimizer.step()
+        
+        train_loss += loss.item()
+        print(output)
+        print(target)
+        print()
+        
+        if batch_idx % 10 == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_dataloader.dataset),
+                100. * batch_idx / len(train_dataloader), loss.item()))
+    
+    train_loss /= len(train_dataloader.dataset)
+    return train_loss, train_acc
+
+def validation(model: torch.nn.Module,
+               device: torch.device,
+               validation_dataloder: DataLoader):
+    model.eval()
+    validation_loss = 0
+    validation_acc = 0
+    
+    with torch.no_grad():
+        for batch in validation_dataloder:
+            data, target = batch["X"].to(device), batch["y"].type(torch.FloatTensor).to(device)
+            output = model(data)
+            validation_loss += F.binary_cross_entropy(output, target).item()  # sum up batch loss
+
+    validation_loss /= len(validation_dataloder.dataset)
+    return validation_loss, validation_acc
+            
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-model", "--model", type=str, help="Which model use (rand, static, non-static)", required=True)
@@ -59,6 +108,7 @@ if __name__ == "__main__":
 
         model_name = args.model
         
+        # TODO: Refazer etapa de limpeza/pré-processamento
         # reading the files
         pos_sentences = read_files(file_path=os.path.join(os.getcwd(), "data", "rt-polarity.pos"), label=1)
         neg_sentences = read_files(file_path=os.path.join(os.getcwd(), "data", "rt-polarity.neg"), label=0)
@@ -68,7 +118,6 @@ if __name__ == "__main__":
         # getting all the sentences from the data
         # which will be used to create the vocabulary dict for the embedding layer
         all_sentences = []
-        all_sentences.extend(all_df["sentence"])
         all_sentences.extend(all_df["sentence"])
         vocab = create_vocab(all_sentences)
 
@@ -112,23 +161,38 @@ if __name__ == "__main__":
 
         model.name = model_name
 
-        train_dataloader = create_data_loader(data=X_train.values,
-                                              target=y_train.values,
-                                              batch_size=args.batch_size,
-                                              worker_init=_init_fn,
-                                              generator=generator)
+        train_dataset = DatasetDL(data=pd.DataFrame({"X": X_train.values.tolist(),
+                                                     "y": y_train.values.tolist()}))
+        
+        train_dataloader = DataLoader(train_dataset,
+                                      batch_size=args.batch_size,
+                                      num_workers=0,
+                                      worker_init_fn=_init_fn,
+                                      generator=generator,
+                                      shuffle=False)
 
-        validation_dataloader = create_data_loader(data=X_validation.values,
-                                                   target=y_validation.values,
-                                                   batch_size=args.batch_size,
-                                                   worker_init=_init_fn,
-                                                   generator=generator)
-
+        validation_dataset = DatasetDL(data=pd.DataFrame({"X": X_validation.values.tolist(),
+                                                          "y": y_validation.values.tolist()}))
+        
+        validation_dataloader = DataLoader(validation_dataset,
+                                           batch_size=args.batch_size,
+                                           num_workers=0,
+                                           worker_init_fn=_init_fn,
+                                           generator=generator,
+                                           shuffle=False)
+    
+        optimizer = torch.optim.Adam(model.parameters())
+        
         s_time = time.process_time()
-        train_model(model=model,
-                    epochs=args.epochs,
-                    train_dataloader=train_dataloader,
-                    validation_dataloader=validation_dataloader,
-                    device=device)
+        
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc = train(model=model,
+                                          train_dataloader=train_dataloader,
+                                          device=device,
+                                          optimizer=optimizer)
+            validation_loss, validation_acc = validation(model=model,
+                                                         device=device,
+                                                         validation_dataloder=validation_dataloader)
+        
         e_time = time.process_time()
         print(f"{model.name} trained in {e_time-s_time:1.2f}s")

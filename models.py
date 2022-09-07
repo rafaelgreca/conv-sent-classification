@@ -1,3 +1,4 @@
+import os
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -44,9 +45,11 @@ class CNN(nn.Module):
             self.embedding.load_state_dict({"weight": embedding_weights})
             self.embedding.weight.requires_grad = False if model == 'static' else True
 
-        # create the convolutional layers stack
-        self.convs = nn.ModuleList([nn.Conv2d(1, n_filters, (fs, embedding_dim)) for fs in filter_sizes])
-
+        # create the convolutional layers
+        self.conv1 = nn.Conv2d(1, n_filters, (filter_sizes[0], embedding_dim))
+        self.conv2 = nn.Conv2d(1, n_filters, (filter_sizes[1], embedding_dim))
+        self.conv3 = nn.Conv2d(1, n_filters, (filter_sizes[2], embedding_dim))
+        
         # create the dropout layer
         self.dropout = nn.Dropout(dropout)
 
@@ -61,15 +64,49 @@ class CNN(nn.Module):
         embedded = embedded.unsqueeze(1) # (batch size, 1, sentence_len, embedding_dim)
 
         # Convolutional layers
-        convs_output = [F.relu(c(embedded)).squeeze(3) for c in self.convs]
+        output_conv1 = F.relu(self.conv1(embedded).squeeze(3))
+        output_conv2 = F.relu(self.conv2(embedded).squeeze(3))
+        output_conv3 = F.relu(self.conv3(embedded).squeeze(3))
 
         # Max pooling layers
-        max_pools_output = [F.max_pool1d(o, o.size(2)).squeeze(2) for o in convs_output]
-
-        # Concatanating max pooling layers outputs
-        cat = self.dropout(torch.cat(max_pools_output, dim = 1))
+        output_maxpool1 = F.max_pool1d(output_conv1, output_conv1.size(2)).squeeze(2)
+        output_maxpool2 = F.max_pool1d(output_conv2, output_conv2.size(2)).squeeze(2)
+        output_maxpool3 = F.max_pool1d(output_conv3, output_conv3.size(2)).squeeze(2)
+        
+        output_maxpool = torch.cat((output_maxpool1, output_maxpool2, output_maxpool3), dim = 1)
+        
+        # Dropout
+        cat = self.dropout(output_maxpool)
 
         # Dense Layer
-        output = torch.sigmoid(self.fc(cat)).squeeze(1)
+        output = self.fc(cat)
         
         return output
+    
+class SaveBestModel:
+    """
+    Class to save the best model while training. If the current epoch's 
+    validation loss is less than the previous least less, then save the
+    model state.
+    """
+    def __init__(
+        self, best_valid_loss=float('inf')
+    ):
+        self.best_valid_loss = best_valid_loss
+        os.makedirs(os.path.join(os.getcwd(), "checkpoints"),
+                    exist_ok=True)
+        
+    def __call__(
+        self, current_valid_loss, 
+        epoch, model, optimizer, criterion
+    ):
+        if current_valid_loss < self.best_valid_loss:
+            self.best_valid_loss = current_valid_loss
+            print(f"\nBest validation loss: {self.best_valid_loss}")
+            print(f"\nSaving best model for epoch: {epoch+1}\n")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': criterion,
+                }, 'checkpoints/best_model.pth')

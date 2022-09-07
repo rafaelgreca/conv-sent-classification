@@ -6,17 +6,18 @@ from preprocessing import Preprocesser
 # read the input files
 def read_files(file_path: str,
                label: int):
-    sentences = list()
     prep = Preprocesser()
-
+    df = pd.DataFrame()
+    
     with open(file_path, errors="ignore") as f:
         for line in f:
             sentence = line.strip()
             cleaned_sentence = prep(str(sentence))
-            sentences.append(cleaned_sentence)      
-
-    df = pd.DataFrame({'sentence': sentences,
-                       'label': [label] * len(sentences)})
+            temp = pd.DataFrame({'sentence': [cleaned_sentence],
+                                 'label': [label]})
+            df = pd.concat([df, temp], axis=0)
+            del temp
+            
     return df
 
 # creates the vocabulary dict

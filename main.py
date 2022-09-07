@@ -7,10 +7,10 @@ import numpy as np
 import warnings
 import pandas as pd
 import time
-import torch.nn.functional as F
+import torch.nn as nn
 from utils import create_vocab, prepare_data, load_pretrained_embedding, read_files
 from sklearn.model_selection import train_test_split
-from models import CNN
+from models import CNN, SaveBestModel
 from torch.utils.data import DataLoader
 from dataset import DatasetDL
 
@@ -40,7 +40,8 @@ generator.manual_seed(seed)
 def train(model: torch.nn.Module,
           train_dataloader: DataLoader,
           device: torch.device,
-          optimizer: torch.optim):
+          optimizer: torch.optim,
+          loss: nn.BCEWithLogitsLoss):
     train_loss = 0
     train_acc = 0
     model.train()
@@ -49,51 +50,53 @@ def train(model: torch.nn.Module,
         data, target = batch["X"].to(device), batch["y"].type(torch.FloatTensor).to(device)
         optimizer.zero_grad()
 
-        output = model(data)
-        loss = F.binary_cross_entropy(output, target)
-        loss.backward()
+        output = model(data).squeeze(1)
+        l = loss(output, target)
+        l.backward()
         optimizer.step()
         
-        train_loss += loss.item()
-        print(output)
-        print(target)
-        print()
-        
+        train_loss += l.item()
+        output_pred = torch.round(torch.sigmoid(output))
+        train_acc = output_pred.eq(target).sum().item() #convert into float for division 
+        # acc = correct.sum() / len(correct)
+    
         if batch_idx % 10 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_dataloader.dataset),
-                100. * batch_idx / len(train_dataloader), loss.item()))
+                100. * batch_idx / len(train_dataloader), l.item()))
     
     train_loss /= len(train_dataloader.dataset)
+    train_acc /= len(train_dataloader.dataset)
+    print(train_acc)
     return train_loss, train_acc
 
 def validation(model: torch.nn.Module,
                device: torch.device,
                validation_dataloder: DataLoader):
-    model.eval()
     validation_loss = 0
     validation_acc = 0
+    model.eval()
     
     with torch.no_grad():
         for batch in validation_dataloder:
             data, target = batch["X"].to(device), batch["y"].type(torch.FloatTensor).to(device)
-            output = model(data)
-            validation_loss += F.binary_cross_entropy(output, target).item()  # sum up batch loss
+            output = model(data).squeeze(1)
+            validation_loss += loss(output, target).item()  # sum up batch loss
 
-    validation_loss /= len(validation_dataloder.dataset)
+        validation_loss /= len(validation_dataloder)
     return validation_loss, validation_acc
             
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-model", "--model", type=str, help="Which model use (rand, static, non-static)", required=True)
-    parser.add_argument("-batch_size", "--batch_size", type=int, help="Batch size for training and evaluation", default=50)
-    parser.add_argument("-embedding_path", "--embedding_path", type=str, help="Embedding file path", default="")
-    parser.add_argument("-embedding_dim", "--embedding_dim", type=int, help="Embedding dimmension", default=300)
-    parser.add_argument("-epochs", "--epochs", type=int, help="Epochs in training step for the CNN model", default=10)
-    parser.add_argument("-max_len", "--max_len", type=int, help="Sequence max length", default=30)
-    parser.add_argument("-test_size", "--test_size", type=float, help="Test size (percentage)", default=0.1)
-    parser.add_argument("-dropout_rate", "--dropout_rate", type=float, help="Dropout rate", default=0.5)
-    parser.add_argument("-filter_units", "--filter_units", type=int, help="Filter units", default=100)
+    parser.add_argument("--model", type=str, help="Which model use (rand, static, non-static)", required=True)
+    parser.add_argument("--batch_size", type=int, help="Batch size for training and evaluation", default=50)
+    parser.add_argument("--embedding_path", type=str, help="Embedding file path", default="")
+    parser.add_argument("--embedding_dim", type=int, help="Embedding dimmension", default=300)
+    parser.add_argument("--epochs", type=int, help="Epochs in training step for the CNN model", default=10)
+    parser.add_argument("--max_len", type=int, help="Sequence max length", default=30)
+    parser.add_argument("--test_size", type=float, help="Test size (percentage)", default=0.1)
+    parser.add_argument("--dropout_rate", type=float, help="Dropout rate", default=0.5)
+    parser.add_argument("--filter_units", type=int, help="Filter units", default=100)
     args = parser.parse_args()
 
     if not len(sys.argv) > 1:
@@ -112,7 +115,7 @@ if __name__ == "__main__":
         # reading the files
         pos_sentences = read_files(file_path=os.path.join(os.getcwd(), "data", "rt-polarity.pos"), label=1)
         neg_sentences = read_files(file_path=os.path.join(os.getcwd(), "data", "rt-polarity.neg"), label=0)
-        all_df = pd.concat([pos_sentences, neg_sentences], axis=0)
+        all_df = pd.concat([pos_sentences, neg_sentences], axis=0).reset_index(drop=True)
         all_df = all_df.drop_duplicates()
         
         # getting all the sentences from the data
@@ -182,6 +185,8 @@ if __name__ == "__main__":
                                            shuffle=False)
     
         optimizer = torch.optim.Adam(model.parameters())
+        loss = nn.BCEWithLogitsLoss()
+        save_best_model = SaveBestModel()
         
         s_time = time.process_time()
         
@@ -189,10 +194,17 @@ if __name__ == "__main__":
             train_loss, train_acc = train(model=model,
                                           train_dataloader=train_dataloader,
                                           device=device,
-                                          optimizer=optimizer)
+                                          optimizer=optimizer,
+                                          loss=loss)
             validation_loss, validation_acc = validation(model=model,
                                                          device=device,
                                                          validation_dataloder=validation_dataloader)
-        
+
+            save_best_model(current_valid_loss=validation_loss,
+                            epoch=epoch,
+                            model=model,
+                            optimizer=optimizer,
+                            criterion=loss)
+            
         e_time = time.process_time()
         print(f"{model.name} trained in {e_time-s_time:1.2f}s")

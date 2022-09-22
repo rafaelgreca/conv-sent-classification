@@ -1,4 +1,5 @@
 import argparse
+from pickletools import optimize
 import sys
 import torch
 import random
@@ -8,13 +9,14 @@ import warnings
 import pandas as pd
 import time
 import torch.nn as nn
-from utils import create_vocab, prepare_data, load_pretrained_embedding, read_files
+# from utils import create_vocab, prepare_data, load_pretrained_embedding, read_files
 from sklearn.model_selection import train_test_split
 from models import CNN, SaveBestModel
 from torch.utils.data import DataLoader
 from dataset import DatasetDL
-from torchtext.datasets import SST
-from torchtext.data import Field, BucketIterator
+from torchtext.datasets import IMDB
+from torchtext.data import Field, LabelField, BucketIterator, Pipeline
+from preprocessing import preprocessor, preprocessor_sst
 
 warnings.filterwarnings("ignore")
 seed = 2109
@@ -31,24 +33,68 @@ torch.cuda.manual_seed_all(seed) # if you are using multi-GPU
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-def _init_fn(worker_id):
-    np.random.seed(seed)
-    random.seed(seed)
+def train(model: torch.nn.Module,
+          dataloader: BucketIterator,
+          optimizer: torch.optim.Adam,
+          loss: torch.nn.BCEWithLogitsLoss):
+    model.train()
+    training_loss = 0
+    training_accuracy = 0
+    
+    for i, batch in enumerate(dataloader):
+        data, label = batch.text, batch.label
+        data, label = data.to(device), label.to(device)
 
-generator = torch.Generator()
-generator.manual_seed(seed)
+        optimizer.zero_grad()
+        output = model(data).squeeze(1)
+        pred = torch.round(torch.sigmoid(output))
+        
+        l = loss(output, label)
+        l.backward()
+        optimizer.step()
+        
+        training_loss += l.detach().item()
+        training_accuracy += (pred.eq(label).sum().detach().item() / len(label))
+    
+    training_loss /= len(dataloader)
+    training_accuracy /= len(dataloader)
+    return training_loss, training_accuracy
+
+def validation(model: torch.nn.Module,
+               dataloader: BucketIterator,
+               optimizer: torch.optim.Adam):
+    model.eval()
+    validation_loss = 0
+    validation_accuracy = 0
+    
+    for i, batch in enumerate(dataloader):
+        data, label = batch.text, batch.label
+        data, label = data.to(device), label.to(device)
+
+        optimizer.zero_grad()
+        output = model(data).squeeze(1)
+        pred = torch.round(torch.sigmoid(output))
+        
+        l = loss(output, label)
+        l.backward()
+        optimizer.step()
+        
+        validation_loss += l.detach().item()
+        validation_accuracy += (pred.eq(label).sum().detach().item() / len(label))
+    
+    validation_loss /= len(dataloader)
+    validation_accuracy /= len(dataloader)
+    return validation_loss, validation_accuracy
+
+def test():
+    pass
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, help="Which model use (rand, static, non-static)", required=True)
     parser.add_argument("--batch_size", type=int, help="Batch size for training and evaluation", default=50)
-    parser.add_argument("--embedding_path", type=str, help="Embedding file path", default="")
-    parser.add_argument("--embedding_dim", type=int, help="Embedding dimmension", default=300)
     parser.add_argument("--epochs", type=int, help="Epochs in training step for the CNN model", default=10)
     parser.add_argument("--max_len", type=int, help="Sequence max length", default=30)
-    parser.add_argument("--test_size", type=float, help="Test size (percentage)", default=0.1)
-    parser.add_argument("--dropout_rate", type=float, help="Dropout rate", default=0.5)
-    parser.add_argument("--filter_units", type=int, help="Filter units", default=100)
     args = parser.parse_args()
 
     if not len(sys.argv) > 1:
@@ -57,19 +103,57 @@ if __name__ == "__main__":
         available_models = ["rand", "static", "non-static"]
         
         assert args.model in available_models, f"You must provide a valid model. Valid models: {available_models}"
-        assert (args.dropout_rate <= 1.0) and (args.dropout_rate > 0), "You must provide a valid dropout rate (between 0 and 1)"
-        assert (args.test_size <= 1.0) and (args.test_size > 0), "You must provide a valid test size (between 0 and 1)"
-
+ 
         model_name = args.model
-        text_field = Field(lower=True)
-        label_field = Field(sequential=False)
+        preprocessor_pipeline = Pipeline(preprocessor_sst)
         
-        train_data, dev_data, test_data = SST.splits(text_field, label_field, fine_grained=True)
+        text_field = Field(lower=True,
+                           batch_first=True,
+                           preprocessing=preprocessor_pipeline,
+                           fix_length=args.max_len)
+        label_field = LabelField(dtype=torch.float32)
+        
+        train_data, test_data = IMDB.splits(text_field, label_field)
 
-        text_field.build_vocab(train_data, dev_data, test_data)
-        label_field.build_vocab(train_data, dev_data, test_data)
+        train_data, valid_data = train_data.split(random_state=random.seed(seed))
+
+        if args.model == "rand":
+            text_field.build_vocab(train_data)
+            label_field.build_vocab(train_data)
+        elif args.model == "static" or args.model == "non-static":
+            text_field.build_vocab(train_data, vectors="glove.6B.300d")
+            label_field.build_vocab(train_data, vectors="glove.6B.300d")
         
-        train_iter, dev_iter, test_iter = BucketIterator.splits((train_data, dev_data, test_data), 
-                                                                batch_sizes=(args.batch_size, 
-                                                                            len(dev_data), 
-                                                                            len(test_data)))
+        train_iter, dev_iter, test_iter = BucketIterator.splits((train_data, valid_data, test_data), 
+                                                                batch_size=args.batch_size)
+        
+        vocab_size = len(text_field.vocab)
+        pad_idx = text_field.vocab.stoi[text_field.pad_token]
+        
+        model = CNN(model="rand",
+                    vocab_size=vocab_size,
+                    embedding_dim=300,
+                    pad_idx=pad_idx)
+        model = model.to(device)
+        
+        optimizer = torch.optim.Adam(model.parameters())
+        loss = torch.nn.BCEWithLogitsLoss()
+        save_best_model = SaveBestModel()
+        
+        for epoch in range(1, args.epochs + 1):
+            print(f"\nTraining epoch: {epoch}")
+            train_loss, train_acc = train(model=model, 
+                                          dataloader=train_iter,
+                                          optimizer=optimizer,
+                                          loss=loss)
+            validation_loss, validation_accuracy = validation(model=model, 
+                                                              dataloader=dev_iter,
+                                                              optimizer=optimizer)
+            
+            save_best_model(current_valid_accuracy=validation_accuracy,
+                            current_valid_loss=validation_loss,
+                            epoch=epoch,
+                            model=model,
+                            optimizer=optimizer,
+                            criterion=loss)
+            

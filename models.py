@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import numpy as np
-from typing import Union
+from typing import Any, Union
 
 # TODO: Refazer
 class CNN(nn.Module):
@@ -17,44 +17,27 @@ class CNN(nn.Module):
                  model: str,
                  vocab_size: int,
                  embedding_dim: int,
-                 embedding_weights: Union[None, np.array],
-                 n_filters: int,
-                 filter_sizes: list,
-                 output_dim: int, 
-                 dropout: float) -> None:
+                 pad_idx: Any) -> None:
         """
         :param model: which model will be created ("rand", "static" or "non-static").
         :param vocab_size: the vocabulary length.
         :param embedding dim: the embedding dimmension.
         :param embedding_weights: the pretrained embedding weights (for the "static" and "non-static" model).
-        :param n_filters: the number of filters in each convolutional layer.
-        :param filter_sizes: the kernel/filter size in each convolutional layer.
-        :param output_dim: the output dimmension (number of units in the dense layer).
-        :param dropout: the droupout rate.
         """
         super(CNN, self).__init__()
 
-        if model == 'rand':
-            # create the embedding layer
-            # randomly initialization
-            self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx = 0)
-        else:
-            # create the embedding layer
-            # loading pretrained embedding
-            self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx = 0)
-            self.embedding.load_state_dict({"weight": embedding_weights})
-            self.embedding.weight.requires_grad = False if model == 'static' else True
-
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx = pad_idx)
+        
         # create the convolutional layers
-        self.conv1 = nn.Conv2d(1, n_filters, (filter_sizes[0], embedding_dim))
-        self.conv2 = nn.Conv2d(1, n_filters, (filter_sizes[1], embedding_dim))
-        self.conv3 = nn.Conv2d(1, n_filters, (filter_sizes[2], embedding_dim))
+        self.conv1 = nn.Conv2d(1, 100, (3, embedding_dim))
+        self.conv2 = nn.Conv2d(1, 100, (4, embedding_dim))
+        self.conv3 = nn.Conv2d(1, 100, (5, embedding_dim))
         
         # create the dropout layer
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(0.5)
 
         # create the dense/fully connected layer (output layer)
-        self.fc = nn.Linear(len(filter_sizes) * n_filters, output_dim)
+        self.fc = nn.Linear(300, 1)
         
     def forward(self,
                 text: torch.tensor) -> torch.tensor:
@@ -90,20 +73,31 @@ class SaveBestModel:
     model state.
     """
     def __init__(
-        self, best_valid_loss=float('inf')
+        self,
+        best_valid_loss=float('inf'),
+        best_valid_accuracy=0.0
     ):
         self.best_valid_loss = best_valid_loss
+        self.best_valid_accuracy = best_valid_accuracy
         os.makedirs(os.path.join(os.getcwd(), "checkpoints"),
                     exist_ok=True)
         
     def __call__(
-        self, current_valid_loss, 
-        epoch, model, optimizer, criterion
+        self,
+        current_valid_loss,
+        current_valid_accuracy,
+        epoch,
+        model,
+        optimizer,
+        criterion
     ):
-        if current_valid_loss < self.best_valid_loss:
+        if current_valid_accuracy > self.best_valid_accuracy:
             self.best_valid_loss = current_valid_loss
-            print(f"\nBest validation loss: {self.best_valid_loss}")
-            print(f"\nSaving best model for epoch: {epoch+1}\n")
+            self.best_valid_accuracy = current_valid_accuracy
+            print("\nSaving model...")
+            print(f"Epoch: {epoch}")
+            print(f"Best validation loss: {self.best_valid_loss}")
+            print(f"Best validation accuracy: {self.best_valid_accuracy}")
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),

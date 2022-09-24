@@ -99,8 +99,7 @@ class SaveBestModel:
             print(f"Best validation loss: {self.best_valid_loss}")
             print(f"Best validation accuracy: {self.best_valid_accuracy}")
             torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': criterion,
-                }, 'checkpoints/best_model.pth')
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss": criterion}, "checkpoints/best_model.pth")

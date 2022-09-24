@@ -53,8 +53,8 @@ def train(model: torch.nn.Module,
         l.backward()
         optimizer.step()
         
-        training_loss += l.detach().item()
-        training_accuracy += (pred.eq(label).sum().detach().item() / len(label))
+        training_loss += l.item()
+        training_accuracy += (pred.eq(label).sum().item() / len(label))
     
     training_loss /= len(dataloader)
     training_accuracy /= len(dataloader)
@@ -79,16 +79,36 @@ def validation(model: torch.nn.Module,
         l.backward()
         optimizer.step()
         
-        validation_loss += l.detach().item()
-        validation_accuracy += (pred.eq(label).sum().detach().item() / len(label))
+        validation_loss += l.item()
+        validation_accuracy += (pred.eq(label).sum().item() / len(label))
     
     validation_loss /= len(dataloader)
     validation_accuracy /= len(dataloader)
     return validation_loss, validation_accuracy
 
-def test():
-    pass
-
+def test(model: torch.nn.Module,
+        dataloader: BucketIterator,
+        loss: torch.nn.BCEWithLogitsLoss):
+    model.eval()
+    test_loss = 0
+    test_accuracy = 0
+    
+    for batch in dataloader:
+        data, label = batch.text, batch.label
+        data, label = data.to(device), label.to(device)
+        
+        output = model(data).squeeze(1)
+        pred = torch.round(torch.sigmoid(output))
+        
+        l = loss(output, label)
+ 
+        test_loss += l.item()
+        test_accuracy += (pred.eq(label).sum().item() / len(label))
+    
+    test_loss /= len(dataloader)
+    test_accuracy /= len(dataloader)
+    return test_loss, test_accuracy
+      
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, help="Which model use (rand, static, non-static)", required=True)
@@ -142,10 +162,12 @@ if __name__ == "__main__":
         
         for epoch in range(1, args.epochs + 1):
             print(f"\nTraining epoch: {epoch}")
+            
             train_loss, train_acc = train(model=model, 
                                           dataloader=train_iter,
                                           optimizer=optimizer,
                                           loss=loss)
+            
             validation_loss, validation_accuracy = validation(model=model, 
                                                               dataloader=dev_iter,
                                                               optimizer=optimizer)
@@ -156,4 +178,12 @@ if __name__ == "__main__":
                             model=model,
                             optimizer=optimizer,
                             criterion=loss)
-            
+        
+        model.load_state_dict(torch.load("checkpoints/best_model.pth")["model_state_dict"])
+        
+        test_loss, test_accuracy = test(model=model,
+                                        dataloader=test_iter,
+                                        loss=loss)
+        
+        print(f"\nTest loss: {test_loss}")
+        print(f"Test accuracy: {test_accuracy}")

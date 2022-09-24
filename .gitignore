@@ -1,4 +1,5 @@
 .data/
+.vector_cache/
 checkpoints/
 
 # Byte-compiled / optimized / DLL files

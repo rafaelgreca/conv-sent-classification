@@ -13,11 +13,15 @@ class CNN(nn.Module):
     (rand), embedding initialized with pretrained embedding's weights and not trainable (static) and 
     embedding initialized with pretrained embedding's weights and trainable (non-static).
     """
-    def __init__(self,
-                 model: str,
-                 vocab_size: int,
-                 embedding_dim: int,
-                 pad_idx: Any) -> None:
+
+    def __init__(
+        self,
+        model: str,
+        vocab_size: int,
+        embedding_dim: int,
+        pad_idx: Any,
+        pretrained_embedding: Any,
+    ) -> None:
         """
         :param model: which model will be created ("rand", "static" or "non-static").
         :param vocab_size: the vocabulary length.
@@ -26,25 +30,30 @@ class CNN(nn.Module):
         """
         super(CNN, self).__init__()
 
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx = pad_idx)
-        
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
+
+        if model == "static":
+            self.embedding = self.embedding.from_pretrained(pretrained_embedding)
+            self.embedding.requires_grad = False
+        elif model == "non-static":
+            self.embedding = self.embedding.from_pretrained(pretrained_embedding)
+
         # create the convolutional layers
         self.conv1 = nn.Conv2d(1, 100, (3, embedding_dim))
         self.conv2 = nn.Conv2d(1, 100, (4, embedding_dim))
         self.conv3 = nn.Conv2d(1, 100, (5, embedding_dim))
-        
+
         # create the dropout layer
         self.dropout = nn.Dropout(0.5)
 
         # create the dense/fully connected layer (output layer)
         self.fc = nn.Linear(300, 1)
-        
-    def forward(self,
-                text: torch.tensor) -> torch.tensor:
-        # Embedding Layer
-        embedded = self.embedding(text) # (batch size, sentence_len, embedding_dim)
 
-        embedded = embedded.unsqueeze(1) # (batch size, 1, sentence_len, embedding_dim)
+    def forward(self, text: torch.tensor) -> torch.tensor:
+        # Embedding Layer
+        embedded = self.embedding(text)  # (batch size, sentence_len, embedding_dim)
+
+        embedded = embedded.unsqueeze(1)  # (batch size, 1, sentence_len, embedding_dim)
 
         # Convolutional layers
         output_conv1 = F.relu(self.conv1(embedded).squeeze(3))
@@ -55,33 +64,32 @@ class CNN(nn.Module):
         output_maxpool1 = F.max_pool1d(output_conv1, output_conv1.size(2)).squeeze(2)
         output_maxpool2 = F.max_pool1d(output_conv2, output_conv2.size(2)).squeeze(2)
         output_maxpool3 = F.max_pool1d(output_conv3, output_conv3.size(2)).squeeze(2)
-        
-        output_maxpool = torch.cat((output_maxpool1, output_maxpool2, output_maxpool3), dim = 1)
-        
+
+        output_maxpool = torch.cat(
+            (output_maxpool1, output_maxpool2, output_maxpool3), dim=1
+        )
+
         # Dropout
         cat = self.dropout(output_maxpool)
 
         # Dense Layer
         output = self.fc(cat)
-        
+
         return output
-    
+
+
 class SaveBestModel:
     """
     Class to save the best model while training. If the current epoch's 
     validation loss is less than the previous least less, then save the
     model state.
     """
-    def __init__(
-        self,
-        best_valid_loss=float('inf'),
-        best_valid_accuracy=0.0
-    ):
+
+    def __init__(self, best_valid_loss=float("inf"), best_valid_accuracy=0.0):
         self.best_valid_loss = best_valid_loss
         self.best_valid_accuracy = best_valid_accuracy
-        os.makedirs(os.path.join(os.getcwd(), "checkpoints"),
-                    exist_ok=True)
-        
+        os.makedirs(os.path.join(os.getcwd(), "checkpoints"), exist_ok=True)
+
     def __call__(
         self,
         current_valid_loss,
@@ -89,7 +97,7 @@ class SaveBestModel:
         epoch,
         model,
         optimizer,
-        criterion
+        criterion,
     ):
         if current_valid_accuracy > self.best_valid_accuracy:
             self.best_valid_loss = current_valid_loss
@@ -98,8 +106,12 @@ class SaveBestModel:
             print(f"Epoch: {epoch}")
             print(f"Best validation loss: {self.best_valid_loss}")
             print(f"Best validation accuracy: {self.best_valid_accuracy}")
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "loss": criterion}, "checkpoints/best_model.pth")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss": criterion,
+                },
+                "checkpoints/best_model.pth",
+            )

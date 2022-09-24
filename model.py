@@ -2,10 +2,9 @@ import os
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-import numpy as np
-from typing import Any, Union
+from typing import Any
 
-# TODO: Refazer
+
 class CNN(nn.Module):
     """
     Yoon Kim"s Convolutional Neural Network (CNN) models implementation described
@@ -85,27 +84,27 @@ class SaveBestModel:
     model state.
     """
 
-    def __init__(self, best_valid_loss=float("inf"), best_valid_accuracy=0.0):
-        self.best_valid_loss = best_valid_loss
-        self.best_valid_accuracy = best_valid_accuracy
+    def __init__(self) -> None:
+        self.best_valid_loss = float("inf")
+        self.best_valid_accuracy = 0.0
         os.makedirs(os.path.join(os.getcwd(), "checkpoints"), exist_ok=True)
 
     def __call__(
         self,
-        current_valid_loss,
-        current_valid_accuracy,
-        epoch,
-        model,
-        optimizer,
-        criterion,
-    ):
+        current_valid_loss: float,
+        current_valid_accuracy: float,
+        epoch: int,
+        model: torch.nn.Module,
+        optimizer: torch.optim,
+        criterion: torch.nn.BCEWithLogitsLoss,
+    ) -> None:
         if current_valid_accuracy > self.best_valid_accuracy:
             self.best_valid_loss = current_valid_loss
             self.best_valid_accuracy = current_valid_accuracy
             print("\nSaving model...")
             print(f"Epoch: {epoch}")
-            print(f"Best validation loss: {self.best_valid_loss}")
-            print(f"Best validation accuracy: {self.best_valid_accuracy}")
+            print(f"Best validation loss: {self.best_valid_loss:1.6f}")
+            print(f"Best validation accuracy: {self.best_valid_accuracy:1.6f}")
             torch.save(
                 {
                     "epoch": epoch,

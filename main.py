@@ -1,5 +1,6 @@
 import argparse
 import sys
+from typing import Tuple
 import torch
 import random
 import os
@@ -35,7 +36,7 @@ def train(
     dataloader: BucketIterator,
     optimizer: torch.optim.Adam,
     loss: torch.nn.BCEWithLogitsLoss,
-):
+) -> Tuple[float, float]:
     model.train()
     training_loss = 0
     training_accuracy = 0
@@ -62,7 +63,7 @@ def train(
 
 def validation(
     model: torch.nn.Module, dataloader: BucketIterator, optimizer: torch.optim.Adam
-):
+) -> Tuple[float, float]:
     model.eval()
     validation_loss = 0
     validation_accuracy = 0
@@ -89,7 +90,7 @@ def validation(
 
 def test(
     model: torch.nn.Module, dataloader: BucketIterator, loss: torch.nn.BCEWithLogitsLoss
-):
+) -> Tuple[float, float]:
     model.eval()
     test_loss = 0
     test_accuracy = 0
@@ -129,9 +130,14 @@ if __name__ == "__main__":
         "--epochs",
         type=int,
         help="Epochs in training step for the CNN model",
-        default=10,
+        default=25,
     )
-    parser.add_argument("--max_len", type=int, help="Sequence max length", default=30)
+    parser.add_argument(
+        "--max_len",
+        type=int,
+        help="Sequence max length",
+        default=30
+    )
     args = parser.parse_args()
 
     if not len(sys.argv) > 1:
@@ -144,7 +150,7 @@ if __name__ == "__main__":
         ), f"You must provide a valid model. Valid models: {available_models}"
 
         model_name = args.model
-        preprocessor_pipeline = Pipeline(preprocessor_sst)
+        preprocessor_pipeline = Pipeline(preprocessor)
 
         text_field = Field(
             lower=True,
@@ -161,6 +167,8 @@ if __name__ == "__main__":
         if args.model == "rand":
             text_field.build_vocab(train_data)
             label_field.build_vocab(train_data)
+            pad_idx = text_field.vocab.stoi[text_field.pad_token]
+            unk_idx = text_field.vocab.stoi[text_field.unk_token]
             pretrained_embedding = None
         elif args.model == "static" or args.model == "non-static":
             text_field.build_vocab(train_data, vectors="glove.6B.300d")
@@ -169,8 +177,8 @@ if __name__ == "__main__":
             pad_idx = text_field.vocab.stoi[text_field.pad_token]
             unk_idx = text_field.vocab.stoi[text_field.unk_token]
             pretrained_embedding = text_field.vocab.vectors
-            pretrained_embedding[unk_idx] = torch.zeros(300)
-            pretrained_embedding[pad_idx] = torch.zeros(300)
+            pretrained_embedding[unk_idx] = torch.rand(300)
+            pretrained_embedding[pad_idx] = torch.rand(300)
 
         vocab_size = len(text_field.vocab)
 
@@ -217,5 +225,5 @@ if __name__ == "__main__":
 
         test_loss, test_accuracy = test(model=model, dataloader=test_iter, loss=loss)
 
-        print(f"\nTest loss: {test_loss}")
-        print(f"Test accuracy: {test_accuracy}")
+        print(f"\nTest loss: {test_loss:1.6f}")
+        print(f"Test accuracy: {test_accuracy:1.6f}")

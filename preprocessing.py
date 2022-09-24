@@ -1,7 +1,7 @@
 import re
 
 
-def preprocessor(sentence: str):
+def preprocessor(sentence: str) -> str:
     """
     Preprocessing step inspired in the original code implemented by Yoon Kim.
     You can check it out here: https://github.com/yoonkim/CNN_sentence/blob/master/process_data.py.
@@ -22,7 +22,7 @@ def preprocessor(sentence: str):
     return sentence.strip().lower()
 
 
-def preprocessor_sst(sentence: str):
+def preprocessor_sst(sentence: str) -> str:
     """
     Tokenization/string cleaning for the SST dataset
     """

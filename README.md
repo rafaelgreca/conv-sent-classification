@@ -1,6 +1,6 @@
 # Convolutional Neural Networks for Sentence Classification
 
-It is slightly simplified implementation of Kim's [Convolutional Neural Networks for Sentence Classification](https://arxiv.org/abs/1408.5882) paper in PyTorch.
+It is slightly simplified implementation of Yoon Kim's [Convolutional Neural Networks for Sentence Classification](https://arxiv.org/abs/1408.5882) paper in PyTorch.
 
 Use of this code may be cited as follows:
 
